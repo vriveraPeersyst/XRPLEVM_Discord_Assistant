@@ -1,0 +1,16 @@
+{
+    "repos": [
+      {
+        "name": "nervos-docs",
+        "url": "https://github.com/nervosnetwork/docs"
+      },
+      {
+        "name": "ckbull-signer-docs",
+        "url": "https://github.com/vriveraPeersyst/ckbull-developer-panel.git"
+      },
+      {
+        "name": "ckbull-spore-nfts-docs",
+        "url": "https://github.com/sporeprotocol/spore-docs.git"
+      }
+    ]
+  }

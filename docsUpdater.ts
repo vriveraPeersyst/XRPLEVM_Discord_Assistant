@@ -1,80 +1,50 @@
-// docsUpdater.ts
 import simpleGit from 'simple-git';
 import fs from 'fs';
 import path from 'path';
-import axios from 'axios';
-import * as dotenv from 'dotenv';
-dotenv.config();
+import { convertNonTextToTxt } from './convertNonTextToTxt';  // see step 5
 
-const repoUrl = process.env.GITHUB_REPO || '';
-const localPath = process.env.DOCS_LOCAL_PATH || './docs';
+interface RepoConfig { name: string; url: string; }
 
-console.log('Repo URL:', repoUrl);
-console.log('Local Path:', localPath);
+const CONFIG_PATH = path.resolve(__dirname, '../repos.config.json');
+const REPOS_BASE  = path.resolve(__dirname, '../repos');
 
-export async function updateDocsRepo(): Promise<void> {
+export async function updateDocsRepos(): Promise<string[]> {
   const git = simpleGit();
+  const { repos }: { repos: RepoConfig[] } = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8'));
 
-  // If the repo already exists locally, pull the latest changes.
-  if (fs.existsSync(localPath)) {
-    const repo = simpleGit(localPath);
-    console.log('Pulling latest changes...');
-    await repo.fetch();
-    await repo.pull();
-  } else {
-    console.log('Cloning repository...');
-    await git.clone(repoUrl, localPath);
-  }
+  // ensure repos/ folder
+  fs.mkdirSync(REPOS_BASE, { recursive: true });
 
-  // Optionally: retrieve the latest tag using GitHub API.
-  try {
-    const tagsRes = await axios.get(
-      `https://api.github.com/repos/ripple/docs.xrplevm.org/tags`,
-      { headers: { Authorization: '' } } // overrides any global default
-    );
-  
-    if (Array.isArray(tagsRes.data) && tagsRes.data.length > 0) {
-      const latestTag = tagsRes.data[0].name;
-      console.log(`Latest tag found: ${latestTag}`);
-  
-      // Check out the latest tag locally
-      const repo = simpleGit(localPath);
-      await repo.checkout(latestTag);
+  let allTextFiles: string[] = [];
+  for (const { name, url } of repos) {
+    const dir = path.join(REPOS_BASE, name);
+    if (fs.existsSync(dir)) {
+      await git.cwd(dir).pull();
     } else {
-      console.log('No tags found, using the current branch.');
+      await git.clone(url, dir);
     }
-  } catch (err) {
-    console.error('Error fetching latest tag, using current branch:', err);
+    // convert Markdown → .txt
+    const { convertAllMdToTxt } = await import('./convertAllMdToTxt');
+    allTextFiles.push(...convertAllMdToTxt(dir));
   }
-  
-}
 
-export function convertMdToTxt(): string[] {
-  const txtFiles: string[] = [];
-
-  // Recursively find all .md files in the localPath
-  function processDir(dir: string) {
-    const files = fs.readdirSync(dir);
-    for (const file of files) {
-      const fullPath = path.join(dir, file);
-      const stat = fs.statSync(fullPath);
-      if (stat.isDirectory()) {
-        processDir(fullPath);
-      } else if (file.endsWith('.md')) {
-        const content = fs.readFileSync(fullPath, 'utf-8');
-
-        // Basic conversion: remove Markdown syntax or simply keep content
-        // (You can improve this conversion as needed)
-        const plainText = content.replace(/[#_*`~>+-]/g, '');
-        
-        // Write a .txt version next to the .md file or in a separate folder
-        const txtFilePath = fullPath.replace(/\.md$/, '.txt');
-        fs.writeFileSync(txtFilePath, plainText, 'utf-8');
-        txtFiles.push(txtFilePath);
+  // process ManualFolder (PDFs, images, CSVs → .txt)
+  const manual = path.resolve(__dirname, '../ManualFolder');
+  if (fs.existsSync(manual)) {
+    allTextFiles.push(...await convertNonTextToTxt(manual));
+    // also include any existing .txt there
+    const gather = (root: string): string[] => {
+      const acc: string[] = [];
+      for (const e of fs.readdirSync(root, { withFileTypes: true })) {
+        const p = path.join(root, e.name);
+        if (e.isDirectory()) gather(p).forEach(x => acc.push(x));
+        else if (p.endsWith('.txt')) acc.push(p);
       }
-    }
+      return acc;
+    };
+    allTextFiles.push(...gather(manual));
   }
 
-  processDir(localPath);
-  return txtFiles;
+  // remove duplicates
+  return Array.from(new Set(allTextFiles));
 }
